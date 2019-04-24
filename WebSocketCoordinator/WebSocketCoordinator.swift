@@ -7,13 +7,13 @@
 //
 
 import Foundation
-import SwiftWebSocket
+import Starscream
 
 public typealias WebSocketPayload = [AnyHashable:Any]
 
 public class WebSocketCoordinator:NSObject {
     
-    static let manager = WebSocketCoordinator()
+    public static let manager = WebSocketCoordinator()
     
     fileprivate struct Subscription {
         
@@ -21,6 +21,7 @@ public class WebSocketCoordinator:NSObject {
         var executionBlock:((WebSocketPayload) -> Void)
     }
     
+    private var webSocket:WebSocket!
     private var subscriptions:[Subscription] = []
     
     private override init() {
@@ -32,24 +33,47 @@ public class WebSocketCoordinator:NSObject {
     
     // MARK: Public
     
-    func connect(ToURL url:String) {
+    public func connect(ToURL url:String) {
         
-        let webSocket = WebSocket(url)
+        guard let url = URL(string: url) else { return }
+        
+        webSocket = WebSocket(url: url)
         webSocket.delegate = self
-        webSocket.open()
+        webSocket.connect()
     }
     
     public func on(message identifier:String, overrideExisting:Bool = false, completion:@escaping ((WebSocketPayload) -> Void)) {
         
         let subscription = Subscription(identifier: identifier, executionBlock: completion)
         
-        guard !overrideExisting else {
+        guard !overrideExisting
+            
+            else {
             
             subscriptions.update(subscription)
             return
         }
         
         subscriptions.append(subscription)
+        log("Subscribed to '\(identifier)'")
+        
+    }
+    
+    public func send(_ content:Any, toRoute route:String) {
+        
+        let jsonObject:[String:Any] = [
+            "data": content,
+            "route": route
+        ]
+        
+        guard let stringifiedJSONObject = JSONSerialization.stringify(jsonObject) else { return }
+        
+        log("Sending message: \(stringifiedJSONObject)")
+        
+        webSocket.write(string: stringifiedJSONObject) {
+            
+            self.log("Did send message")
+        }
     }
     
     // MARK: Private
@@ -62,28 +86,28 @@ public class WebSocketCoordinator:NSObject {
 
 extension WebSocketCoordinator:WebSocketDelegate {
     
-    public func webSocketOpen() {
-        
-        log("Did open web socket")
-    }
-    
-    public func webSocketClose(_ code: Int, reason: String, wasClean: Bool) {
+    public func websocketDidDisconnect(socket: WebSocketClient, error: Error?) {
         
     }
     
-    public func webSocketError(_ error: NSError) {
-        
+    
+    public func websocketDidConnect(socket: WebSocketClient) {
+        log("WebSocket did connect")
     }
     
-    public func webSocketMessageData(_ data: Data) {
+    public func websocketDidReceiveData(socket: WebSocketClient, data: Data) {
+        log("WebSocket did receive data.")
+    }
+    
+    public func websocketDidReceiveMessage(socket: WebSocketClient, text: String) {
+        
+        log("Did receive text: \(text)")
         
         guard
-            let jsonObject = data.toJSONObject(),
-            let identifier = jsonObject["indentifier"] as? String,
-            let payload = jsonObject["payload"] as? WebSocketPayload
+            let jsonObject = JSONSerialization.parse(text) as? [AnyHashable:Any],
+            let payload = jsonObject["data"] as? WebSocketPayload,
+            let identifier = jsonObject["identifier"] as? String
         else { return }
-        
-        log("Did receive message with payload: \(payload)")
         
         subscriptions.with(identifier).foreach({ (subscription) in
             
@@ -91,12 +115,36 @@ extension WebSocketCoordinator:WebSocketDelegate {
             
         }, else: {
             
-            self.log("'\(identifier)' is not subscribed")
+            self.log("No subscriptions found for message with identifier '\(identifier)'")
         })
     }
+}
+
+private extension JSONSerialization {
     
-    public func webSocketMessageText(_ text: String) {
+    class func parse(_ text:String) -> Any? {
         
+        do {
+            
+            guard let data = text.data(using: .utf8) else { return nil }
+            
+            return try jsonObject(with: data, options: .allowFragments)
+        }
+        catch {
+            
+            return nil
+        }
+    }
+    
+    class func stringify(_ jsonObject:Any) -> String? {
+        
+        do {
+            
+            let _data = try data(withJSONObject: jsonObject, options: .sortedKeys)
+            
+            return String(data: _data, encoding: .utf8)
+        }
+        catch { return nil }
     }
 }
 

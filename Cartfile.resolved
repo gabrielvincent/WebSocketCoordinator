@@ -1,1 +1,2 @@
+github "gabrielvincent/WebSocketCoordinator" "v0.0.1"
 github "tidwall/SwiftWebSocket" "v2.8.0"
